@@ -72,22 +72,22 @@ jobs:
           else
             gh release create --draft "$tag" --title "$tag" --notes "$body" --verify-tag
           fi
-
   build-iso:
     runs-on: ubuntu-latest
     needs: [ create-github-release ]
     strategy:
       fail-fast: false
       matrix:
-        arch: [ 'x86_64' ]
-    timeout-minutes: 60
+        # Add aarch64 to the matrix
+        arch: [ 'x86_64', 'aarch64' ]
+    timeout-minutes: 90 # Increased for ARM emulation overhead
     steps:
       - uses: endersonmenezes/free-disk-space@v3
         with:
-          rm_cmd: "rmz"
           remove_android: true
           remove_dotnet: true
           remove_haskell: true
+
       - uses: actions/checkout@v4
 
       - name: Build ISO
@@ -97,22 +97,25 @@ jobs:
           options: --privileged -v /dev:/dev -v ${{ github.workspace }}:/root/asterinas
           run: |
             export ASTER_BUILD_TIMESTAMP=`date '+%a %b %e %H:%M:%S %Z %Y'`
+            # Map aarch64 for the Makefile if it expects OSDK_TARGET_ARCH
+            export OSDK_TARGET_ARCH=${{ matrix.arch }}
+            
+            # Run the build
             make iso RELEASE=1 AUTO_INSTALL=false ARCH=${{ matrix.arch }}
-            iso_path=$(realpath ./target/nixos/iso_image/iso/*.iso)
-            echo "iso_path=$iso_path"
-            cp $iso_path ./asterinas-nixos.iso
-            echo "Building ISO succeeds"
+            
+            # The ISO path usually lives in target/ or build/
+            iso_path=$(find ./ -name "*.iso" | head -n 1)
+            echo "Found ISO at: $iso_path"
+            cp $iso_path ./asterinas-nixos-${{ matrix.arch }}.iso
+
       - name: Upload ISO
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          kernel_version="${{ needs.create-github-release.outputs.kernel_version }}"
           tag="${{ needs.create-github-release.outputs.tag }}"
-          echo "upload asterinas-nixos-$kernel_version-${{ matrix.arch }}.iso"
-          cd ${{ github.workspace }}
-          mv ./asterinas-nixos.iso asterinas-nixos-$kernel_version-${{ matrix.arch }}.iso
-          gh release upload "$tag" "asterinas-nixos-$kernel_version-${{ matrix.arch }}.iso"
+          filename="asterinas-nixos-${{ matrix.arch }}.iso"
+          gh release upload "$tag" "$filename"
 
   publish-github-release:
     runs-on: ubuntu-latest
